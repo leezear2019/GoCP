@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strings"
 )
 
 //
@@ -74,12 +75,60 @@ type XModel2 struct {
 }
 
 type XVar struct {
+	ID     int
+	Name   string
+	Values []int
 }
 
 type XCon struct {
+	ID        int
+	Name      string
+	Semantics bool
+	Arity     int
+	Scope     []XVar
+	Tuples    [][]int
+	ScopeInt  []int
 }
 
 type XModel struct {
+	Vars    []XVar
+	Cons    []XCon
+	DomMap  map[string]int
+	VarsMap map[string]int
+	RelMap  map[string]int
+	ConsMap map[string]int
+}
+
+func (xm XModel) BuildXModel(xm2 *XModel2) {
+	// 初始化四个map
+	for i, d := range xm2.XDomains.Domains {
+		xm.DomMap[d.Name] = i
+	}
+
+	for i, v := range xm2.XVariables.Variables {
+		xm.VarsMap[v.Name] = i
+		// 获取valueStr
+		valueStr := xm2.XDomains.Domains[xm.DomMap[v.Name]].ValuesStr
+		values := []int{}
+		if strings.Contains(valueStr, "..") {
+			//获取两部
+			var lb, ub int
+			fmt.Sscanf(valueStr, "%d..%d", &lb, &ub)
+			for ii := lb; ii <= ub; ii++ {
+				values = append(values, ii)
+			}
+
+		} else if !strings.Contains(valueStr, " ") {
+
+		}
+		xm.Vars = append(xm.Vars, XVar{i, v.Name, make([]int, len(values))})
+		copy(xm.Vars[i].Values, values)
+	}
+
+	for i, c := range xm2.XConstraints.Constraints {
+		xm.VarsMap[c.Name] = i
+	}
+
 }
 
 func main() {
