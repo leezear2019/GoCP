@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -86,29 +87,44 @@ type XCon struct {
 	Semantics bool
 	Arity     int
 	Scope     []XVar
-	Tuples    [][]int
 	ScopeInt  []int
+	Tuples    [][]int
 }
 
 type XModel struct {
 	Vars    []XVar
 	Cons    []XCon
-	DomMap  map[string]int
-	VarsMap map[string]int
-	RelMap  map[string]int
-	ConsMap map[string]int
+	NumVars int
+	NumCons int
+	domsMap map[string]int
+	varsMap map[string]int
+	relsMap map[string]int
+	consMap map[string]int
 }
 
-func (xm XModel) BuildXModel(xm2 *XModel2) {
+//func (xv XVar) BuildXVar(id int, name string, values []int) {
+//
+//}
+
+func (xm *XModel) BuildXModel(xm2 *XModel2) {
+	xm.NumVars = xm2.XVariables.NumVariables
+	xm.NumCons = xm2.XConstraints.NumConstraints
+	xm.Vars = make([]XVar, xm.NumVars)
+	xm.Cons = make([]XCon, xm.NumCons)
+	xm.domsMap = make(map[string]int)
+	xm.varsMap = make(map[string]int)
+	xm.relsMap = make(map[string]int)
+	xm.consMap = make(map[string]int)
 	// 初始化四个map
 	for i, d := range xm2.XDomains.Domains {
-		xm.DomMap[d.Name] = i
+		xm.domsMap[d.Name] = i
 	}
 
 	for i, v := range xm2.XVariables.Variables {
-		xm.VarsMap[v.Name] = i
+		xm.varsMap[v.Name] = i
+		xm.Vars[i].Name = v.Name
 		// 获取valueStr
-		valueStr := xm2.XDomains.Domains[xm.DomMap[v.Name]].ValuesStr
+		valueStr := xm2.XDomains.Domains[xm.domsMap[v.Name]].ValuesStr
 		values := []int{}
 		if strings.Contains(valueStr, "..") {
 			//获取两部
@@ -119,70 +135,147 @@ func (xm XModel) BuildXModel(xm2 *XModel2) {
 			}
 
 		} else if !strings.Contains(valueStr, " ") {
-
+			vs := strings.Split(valueStr, " ")
+			for _, v := range vs {
+				ii, _ := strconv.Atoi(v)
+				values = append(values, ii)
+			}
 		}
-		xm.Vars = append(xm.Vars, XVar{i, v.Name, make([]int, len(values))})
+		xm.Vars[i] = XVar{i, v.Name, make([]int, len(values))}
 		copy(xm.Vars[i].Values, values)
 	}
 
-	for i, c := range xm2.XConstraints.Constraints {
-		xm.VarsMap[c.Name] = i
+	for i, r := range xm2.XRelations.Relations {
+		xm.relsMap[r.Name] = i
 	}
 
+	for i, c := range xm2.XConstraints.Constraints {
+		xm.consMap[c.Name] = i
+		name := c.Name
+		relIndex := xm.relsMap[c.Reference]
+
+		var semantics bool
+		switch xm2.XRelations.Relations[relIndex].Semantics {
+		case "supports":
+			semantics = true
+		case "conflicts":
+			semantics = false
+		default:
+			fmt.Printf("Semantics error\n")
+		}
+
+		// arity, scope
+		arity := xm2.XRelations.Relations[relIndex].Arity
+		numTuples := xm2.XRelations.Relations[relIndex].NumTuples
+		scope := make([]XVar, arity)
+		scopeInt := make([]int, arity)
+		scopeVarStr := strings.Split(xm2.XConstraints.Constraints[i].ScopeStr, " ")
+
+		for ii, varStr := range scopeVarStr {
+			vid := xm.varsMap[varStr]
+			scope[ii] = xm.Vars[vid]
+			scopeInt[ii] = vid
+		}
+
+		xm.Cons[i] = XCon{
+			ID:        i,
+			Name:      name,
+			Semantics: semantics,
+			Arity:     arity,
+			Scope:     make([]XVar, arity),
+			ScopeInt:  make([]int, arity),
+			Tuples:    make([][]int, numTuples),
+		}
+
+		copy(xm.Cons[i].Scope, scope)
+		copy(xm.Cons[i].ScopeInt, scopeInt)
+
+		//xm.Cons[i].Tuples = make([][]int, numTuples)
+		tuplesStr := strings.Split(xm2.XRelations.Relations[relIndex].TuplesStr, "|")
+
+		for ii, s := range tuplesStr {
+			tupleStr := strings.Split(s, " ")
+			xm.Cons[i].Tuples[ii] = make([]int, arity)
+			for jj, t := range tupleStr {
+				tt, _ := strconv.Atoi(t)
+				xm.Cons[i].Tuples[ii][jj] = tt
+			}
+		}
+
+	}
+}
+
+func (xm *XModel) show() {
+	//fmt.Println(xm.domsMap)
+	//fmt.Println(xm.varsMap)
+	fmt.Println("-------show model-------")
+	for i, v := range xm.Vars {
+		fmt.Println(i, v)
+	}
+	//fmt.Println(xm.relsMap)
+	//fmt.Println(xm.consMap)
+	for i, c := range xm.Cons {
+		fmt.Println(i, c)
+	}
 }
 
 func main() {
 
 	file, err := os.Open("benchmarks/q4.xml") // For read access.
 	if err != nil {
-		fmt.Printf("error: %v", err)
+		fmt.Printf("error: %xm2", err)
 		return
 	}
 
 	defer file.Close()
 	data, err := ioutil.ReadAll(file)
 	if err != nil {
-		fmt.Printf("error: %v", err)
+		fmt.Printf("error: %xm2", err)
 		return
 	}
 
-	v := XModel2{}
-	err = xml.Unmarshal(data, &v)
+	xm2 := XModel2{}
+	err = xml.Unmarshal(data, &xm2)
 	if err != nil {
-		fmt.Printf("error: %v", err)
+		fmt.Printf("error: %xm2", err)
 		return
 	}
 
-	fmt.Println(v)
-	fmt.Println(v.XConstraints)
-	fmt.Println(v.XConstraints.Constraints[0].Name)
-	//fmt.Println(v.XDomains)
+	fmt.Println(xm2)
+	xm := XModel{}
+	xm.BuildXModel(&xm2)
+	//fmt.Println(xm)
+	fmt.Println("---------------------------")
+	xm.show()
+	//fmt.Println(xm2.XConstraints)
+	//fmt.Println(xm2.XConstraints.Constraints[0].Name)
+	//fmt.Println(xm2.XDomains)
 
 	//file, err := os.Open("servers.xml") // For read access.
 	//if err != nil {
-	//	fmt.Printf("error: %v", err)
+	//	fmt.Printf("error: %xm2", err)
 	//	return
 	//}
 	//defer file.Close()
 	//data, err := ioutil.ReadAll(file)
 	//if err != nil {
-	//	fmt.Printf("error: %v", err)
+	//	fmt.Printf("error: %xm2", err)
 	//	return
 	//}
-	//v := SConfig{}
-	//err = xml.Unmarshal(data, &v)
+	//xm2 := SConfig{}
+	//err = xml.Unmarshal(data, &xm2)
 	//if err != nil {
-	//	fmt.Printf("error: %v", err)
+	//	fmt.Printf("error: %xm2", err)
 	//	return
 	//}
 	//
-	//fmt.Println(v)
-	//fmt.Println("SmtpServer : ", v.SmtpServer)
-	//fmt.Println("SmtpPort : ", v.SmtpPort)
-	//fmt.Println("Sender : ", v.Sender)
-	//fmt.Println("SenderPasswd : ", v.SenderPasswd)
-	//fmt.Println("Receivers.Flag : ", v.Receivers.Flag)
-	//for i, element := range v.Receivers.User {
+	//fmt.Println(xm2)
+	//fmt.Println("SmtpServer : ", xm2.SmtpServer)
+	//fmt.Println("SmtpPort : ", xm2.SmtpPort)
+	//fmt.Println("Sender : ", xm2.Sender)
+	//fmt.Println("SenderPasswd : ", xm2.SenderPasswd)
+	//fmt.Println("Receivers.Flag : ", xm2.Receivers.Flag)
+	//for i, element := range xm2.Receivers.User {
 	//	fmt.Println(i, element)
 	//}
 }
